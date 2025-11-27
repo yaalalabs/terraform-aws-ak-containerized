@@ -47,6 +47,33 @@ variable "agent_endpoint" {
   default     = "chat"
 }
 
+variable "api_base_path" {
+  type        = string
+  description = "Optional base path segment for the API (e.g., 'api'). Set to null or empty to omit."
+  default     = "api"
+}
+
+variable "gateway_endpoints" {
+  description = "List of HTTP API endpoints to expose. If empty, a default POST /api/{api_version}/{agent_endpoint} is created."
+  type = list(object({
+    path = string        # e.g. "chat"
+    method = string        # e.g. "GET", "POST", "PUT", "DELETE", "ANY"
+    overwrite_path = string # backend path override for ALB target, e.g. "/run"
+  }))
+  default = []
+  validation {
+    condition = alltrue([
+      for ep in var.gateway_endpoints : (
+        length(trim(ep.path)) > 0 &&
+        length(trim(ep.method)) > 0 &&
+        length(trim(ep.overwrite_path)) > 0 &&
+        contains(["GET", "POST", "PUT", "DELETE", "PATCH", "ANY", "$default"], upper(ep.method))
+      )
+    ])
+    error_message = "Each gateway_endpoints object must have non-empty 'path', 'method', and 'overwrite_path' fields, and 'method' must be one of: GET, POST, PUT, DELETE, PATCH, ANY, $default."
+  }
+}
+
 variable "tags" {
   type = map(string)
   description = "Resource tags"
@@ -88,6 +115,13 @@ variable "create_redis_cluster" {
   description = "Agent memory type. Accepted values are redis or in_memory"
   default     = false
 }
+
+variable "create_dynamodb_memory_table" {
+  type        = bool
+  description = "Create a dynamodb table to store the Agent memory"
+  default     = false
+}
+
 
 variable "ecs_cpu" {
   type        = number
