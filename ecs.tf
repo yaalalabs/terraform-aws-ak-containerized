@@ -4,9 +4,38 @@ resource "aws_service_discovery_http_namespace" "this" {
   tags        = var.tags
 }
 
+resource "aws_iam_policy" "dynamodb_policy" {
+  count       = var.create_dynamodb_memory_table == true ? 1 : 0
+  name        = "${var.product_alias}-${var.env_alias}-${var.module_name}-dynamodb-policy"
+  description = "Policy for DynamoDB access"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:DescribeTable",
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Query",
+          "dynamodb:Scan"
+        ]
+        Resource = [
+          local.dynamodb_memory_table_arn,
+          "${local.dynamodb_memory_table_arn}/index/*"
+        ]
+      }
+    ]
+  })
+
+  tags = var.tags
+}
 module "ecs" {
   source  = "terraform-aws-modules/ecs/aws"
-  version = "6.3.0"
+  version = "6.10.0"
 
   cluster_name = "${var.product_alias}-${var.env_alias}-${var.module_name}"
 
@@ -43,6 +72,12 @@ module "ecs" {
         ]
       }
 
+      # Attach DynamoDB access to the task role if a memory table exists
+      create_tasks_iam_role   = true
+      tasks_iam_role_policies = var.create_dynamodb_memory_table ? {
+        DynamoDB = var.create_dynamodb_memory_table ? aws_iam_policy.dynamodb_policy[0].arn : null
+      } : {}
+
       container_definitions = {
         (local.container_name) = {
           cpu                    = var.ecs_cpu
@@ -60,16 +95,20 @@ module "ecs" {
           ]
           enable_cloudwatch_logging = true
           environment               = [
-            for k, v in merge(var.environment_variables, {
-              AK_REDIS_URL = local.redis_url,
-            }) : {
+            for k, v in merge(var.environment_variables, local.redis_url != null ? {
+              AK_SESSION__REDIS__URL = local.redis_url
+            } : {},
+                local.dynamodb_memory_table_arn != null ? {
+                AK_SESSION__DYNAMODB__TABLE_NAME = local.dynamodb_memory_table_name
+              } : {}
+            ) : {
               name  = k
               value = v
             }
           ]
 
           health_check = {
-            command = ["CMD-SHELL", "curl -sf http://localhost:${var.ecs_container_port}${var.ecs_health_check_path} || exit 1"],
+            command = ["CMD-SHELL", "curl -sf http://localhost:${var.ecs_container_port}${var.ecs_health_check_endpoint} || exit 1"],
             interval    = 30,
             timeout     = 5,
             retries     = 3,
@@ -140,7 +179,7 @@ resource "aws_lb_target_group" "app" {
   vpc_id      = local.vpc_id
   target_type = "ip"
   health_check {
-    path                = var.ecs_health_check_path
+    path                = var.ecs_health_check_endpoint
     healthy_threshold   = 2
     unhealthy_threshold = 2
     timeout             = 5

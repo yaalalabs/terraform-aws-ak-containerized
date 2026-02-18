@@ -47,6 +47,33 @@ variable "agent_endpoint" {
   default     = "chat"
 }
 
+variable "api_base_path" {
+  type        = string
+  description = "Optional base path segment for the API (e.g., 'api'). Set to null or empty to omit."
+  default     = "api"
+}
+
+variable "gateway_endpoints" {
+  description = "List of HTTP API endpoints to expose. If empty, a default POST /api/{api_version}/{agent_endpoint} endpoint is created."
+  type = list(object({
+    path = string        # The URL path segment that clients will access (e.g., "chat", "users", "webhook"). This becomes part of the full URL: https://your-domain.com/{api_base_path}/{api_version}/{path}
+    method = string        # HTTP method for this endpoint (e.g., "GET", "POST", "PUT", "DELETE", "ANY"). "ANY" accepts all HTTP methods. "$default" is a special catch-all route.
+    overwrite_path = string # The backend path that the ALB forwards requests to (e.g., "/api/v1/chat", "/internal/webhook"). This allows mapping external paths to different internal service endpoints.
+  }))
+  default = []
+  validation {
+    condition = alltrue([
+      for ep in var.gateway_endpoints : (
+        length(trimspace(ep.path)) > 0 &&
+        length(trimspace(ep.method)) > 0 &&
+        length(trimspace(ep.overwrite_path)) > 0 &&
+        contains(["GET", "POST", "PUT", "DELETE", "PATCH", "ANY", "$default"], upper(ep.method))
+      )
+    ])
+    error_message = "Each gateway_endpoints object must have non-empty 'path', 'method', and 'overwrite_path' fields, and 'method' must be one of: GET, POST, PUT, DELETE, PATCH, ANY, $default."
+  }
+}
+
 variable "tags" {
   type = map(string)
   description = "Resource tags"
@@ -89,6 +116,13 @@ variable "create_redis_cluster" {
   default     = false
 }
 
+variable "create_dynamodb_memory_table" {
+  type        = bool
+  description = "Create a dynamodb table to store the Agent memory"
+  default     = false
+}
+
+
 variable "ecs_cpu" {
   type        = number
   description = "Fargate CPU units"
@@ -113,7 +147,7 @@ variable "ecs_container_port" {
   default     = 8000
 }
 
-variable "ecs_health_check_path" {
+variable "ecs_health_check_endpoint" {
   type        = string
   description = "Health check path for ALB target group"
   default     = "/health"
@@ -127,6 +161,69 @@ variable "container_type" {
     condition = contains(["ecs", "eks"], lower(var.container_type))
     error_message = "Container type must be either 'ecs' or 'eks'."
   }
+}
+
+# CORS configuration for HTTP API (API Gateway v2)
+variable "enable_cors" {
+  type        = bool
+  description = "Enable CORS on the HTTP API"
+  default     = true
+}
+
+variable "cors_allow_origins" {
+  type        = list(string)
+  description = "CORS allowed origins"
+  default     = ["*"]
+}
+
+variable "cors_allow_methods" {
+  type        = list(string)
+  description = "CORS allowed methods"
+  default     = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+}
+
+variable "cors_allow_headers" {
+  type        = list(string)
+  description = "CORS allowed headers"
+  default     = ["*"]
+}
+
+variable "cors_expose_headers" {
+  type        = list(string)
+  description = "CORS exposed headers"
+  default     = []
+}
+
+variable "cors_max_age" {
+  type        = number
+  description = "CORS max age in seconds"
+  default     = 600
+}
+
+variable "cors_allow_credentials" {
+  type        = bool
+  description = "Whether to allow credentials for CORS"
+  default     = false
+}
+
+# Stage throttling (default route settings)
+# Both values must be provided to enable throttling block.
+variable "throttling_rate_limit" {
+  type        = number
+  description = "Steady-state rate limit (requests per second) for default route. Set null to disable."
+  default     = null
+}
+
+variable "throttling_burst_limit" {
+  type        = number
+  description = "Burst limit (token bucket size) for default route. Set null to disable."
+  default     = null
+}
+
+variable "enable_mcp_server" {
+  type        = bool
+  description = "Enable MCP server and expose MCP API endpoint"
+  default     = false
 }
 
 data "aws_ecr_authorization_token" "token" {}
