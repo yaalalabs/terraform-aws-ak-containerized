@@ -83,6 +83,8 @@ queue_config = {
   input_queue_max_receive_count             = 5
   input_queue_create_dlq                    = false
   input_queue_dlq_message_retention_seconds = 1800
+  # Set by the root from `enable_scheduling`, not by users
+  input_queue_content_based_deduplication   = false
 
   # Output queue
   output_queue_visibility_timeout            = 60
@@ -148,8 +150,40 @@ rest_service = {
 - `AK_SESSION__DYNAMODB__TABLE_NAME` (if DynamoDB memory table enabled)
 - `AK_EXECUTION__QUEUES__INPUT__URL` (if queue mode enabled)
 - `AK_EXECUTION__QUEUES__OUTPUT__URL` (if queue mode enabled)
-- `AK_EXECUTION__RESPONSE_STORE__DYNAMODB__TABLE_NAME` (if queue mode enabled)
+- `AK_EXECUTION__RESPONSE_STORE__DYNAMODB__TABLE_NAME` (if queue mode enabled, not in WebSocket mode)
 - `AK_EXECUTION__QUEUES__BATCH_SIZE` (if queue mode enabled, from root `queue_config.batch_size`)
+- `AK_EXECUTION__MODE` (`async` or `stream`, WebSocket mode only)
+- `AK_WEBSOCKET_API__CHAT_ROUTE`, `AK_WEBSOCKET_API__ENDPOINT_URL`, `AK_WEBSOCKET_API__CONNECTION_TABLE__TABLE_NAME` (WebSocket mode only)
+- `AK_SCHEDULE__PROVIDER__EVENTBRIDGE__GROUP_NAME`, `__ROLE_ARN`, `__QUEUE_ARN` (if `enable_scheduling`)
+- `AK_SCHEDULE__STORE__DYNAMODB__TABLE_NAME` (if `create_dynamodb_schedule_table`)
+
+  > Terraform never injects `AK_SCHEDULE__PROVIDER__TYPE` or `AK_SCHEDULE__STORE__TYPE` — the
+  > application declares `schedule.provider.type: eventbridge` and `schedule.store.type: dynamodb`
+  > in its committed `config.yaml`, the same rule as `thread.type`. Because any `AK_SCHEDULE__*`
+  > variable is enough to populate the config block, the injected variables *alone* would enable
+  > scheduling on the default `local`/`in_memory` backends: the provisioned group and table would
+  > sit unused.
+
+#### WebSocket Mode
+
+The `rest-service` module serves **both** REST and WebSocket ingress from the same ECS
+service — it is not a separate module. `websocket_mode` is set from the root module's
+`local.is_websocket_mode` (`true` when `execution_mode` is `async` or `stream`) and adds:
+
+- An internal **Network Load Balancer** (`aws_lb.nlb`) in front of the existing ALB
+  (`aws_lb_target_group_attachment.nlb_to_alb`), because the WebSocket API Gateway needs a
+  **VPC Link V1**, which only supports NLB targets (VPC Link V2, used by the HTTP API in
+  non-WebSocket modes, is ALB-compatible but WS-incompatible). The ALB itself is always
+  created; the NLB is additive.
+- New outputs: `nlb_arn`, `nlb_listener_arn`, `nlb_dns_name` (all `null` unless
+  `websocket_mode = true`) — consumed by the root module's `api_gateway_ws.tf` VPC Link.
+- New input variables: `websocket_connections_table_name` / `websocket_connections_table_arn`
+  (the DynamoDB connections table, provisioned by the root module's `dynamodb.tf`),
+  `websocket_api_execution_arn` (for the `execute-api:ManageConnections` IAM policy), and
+  `websocket_endpoint_url` (injected as `AK_WEBSOCKET_API__ENDPOINT_URL` for `PostToConnection`).
+
+See the root [README.md](../README.md#websocket-mode---async-async-and-stream-stream) for the
+full request lifecycle, IAM, and Terraform configuration.
 
 ### 3. `agent-runner/`
 
@@ -213,6 +247,10 @@ scaling_config = {
 - `AK_EXECUTION__QUEUES__BATCH_SIZE` (from root `queue_config.batch_size`)
 - `AK_SESSION__REDIS__URL` (if Redis enabled)
 - `AK_SESSION__DYNAMODB__TABLE_NAME` (if DynamoDB memory table enabled)
+- `AK_EXECUTION__MODE` (`async` or `stream`, WebSocket mode only — lets the agent runner forward
+  the `endpoint_url` custom attribute to the Output Queue so the REST/IO service can push the reply)
+- `AK_SCHEDULE__PROVIDER__EVENTBRIDGE__GROUP_NAME`, `__ROLE_ARN`, `__QUEUE_ARN` (if `enable_scheduling`)
+- `AK_SCHEDULE__STORE__DYNAMODB__TABLE_NAME` (if `create_dynamodb_schedule_table`)
 
 **Auto Scaling Behavior**:
 When `scaling_config.enabled = true`:
@@ -285,8 +323,8 @@ module "containerized_agents" {
   }
 
   # Queue mode for async processing
-  queue_mode = true
-  execution_mode   = "async"
+  queue_mode     = true
+  execution_mode = "rest_async"  # rest_sync | rest_async | async | stream
 
   queue_config = {
     input_queue_visibility_timeout  = 120
@@ -351,6 +389,7 @@ module "containerized_agents" {
 | **Queue Module**    | ✅                       | ✅                      |
 | **Scaling Config**  | Built-in                 | `scaling_config` object |
 | **Load Balancer**   | API Gateway direct       | ALB + API Gateway       |
+| **WebSocket Mode**  | ✅ (`async`/`stream`)     | ✅ (`async`/`stream`)   |
 
 ## Migration from Old Structure
 

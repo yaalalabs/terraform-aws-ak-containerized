@@ -11,6 +11,12 @@ variable "env_alias" {
 variable "module_name" {
   type        = string
   description = "Module name for resource naming"
+
+  validation {
+    # + 6 accounts for the "-alb"/"-nlb" suffix and its 2 joining hyphens
+    condition     = length(var.product_alias) + length(var.env_alias) + length(var.module_name) + 6 <= 32
+    error_message = "product_alias + env_alias + module_name must be at most 26 characters combined, so that the \"${var.product_alias}-${var.env_alias}-${var.module_name}-alb\"/\"-nlb\" load balancer name stays within AWS's 32-character limit."
+  }
 }
 
 variable "region" {
@@ -83,6 +89,60 @@ variable "dynamodb_memory_table_name" {
   default     = null
 }
 
+variable "create_dynamodb_thread_table" {
+  type        = bool
+  description = "Whether the DynamoDB conversation thread table is created"
+  default     = false
+}
+
+variable "dynamodb_thread_table_arn" {
+  type        = string
+  description = "DynamoDB conversation thread table ARN"
+  default     = null
+}
+
+variable "dynamodb_thread_table_name" {
+  type        = string
+  description = "DynamoDB conversation thread table name"
+  default     = null
+}
+
+variable "enable_scheduling" {
+  type        = bool
+  description = "Whether the EventBridge Scheduler resources are provisioned"
+  default     = false
+}
+
+variable "schedule_group_name" {
+  type        = string
+  description = "EventBridge Scheduler schedule-group name the scheduled tasks register their schedules in"
+  default     = null
+}
+
+variable "scheduler_execution_role_arn" {
+  type        = string
+  description = "ARN of the role EventBridge Scheduler assumes to deliver scheduled triggers to the Input Queue"
+  default     = null
+}
+
+variable "create_dynamodb_schedule_table" {
+  type        = bool
+  description = "Whether the DynamoDB schedule store table is created"
+  default     = false
+}
+
+variable "dynamodb_schedule_table_arn" {
+  type        = string
+  description = "DynamoDB schedule store table ARN"
+  default     = null
+}
+
+variable "dynamodb_schedule_table_name" {
+  type        = string
+  description = "DynamoDB schedule store table name"
+  default     = null
+}
+
 variable "rest_service" {
   description = "REST service configuration object"
   type = object({
@@ -102,6 +162,12 @@ variable "queue_mode" {
   type        = bool
   description = "Whether queue mode is enabled"
   default     = false
+}
+
+variable "input_queue_arn" {
+  type        = string
+  description = "SQS Input Queue ARN (queue mode only) — the target EventBridge Scheduler delivers scheduled triggers to"
+  default     = null
 }
 
 variable "input_queue_url" {
@@ -127,6 +193,44 @@ variable "queue_config" {
   type = object({
     batch_size = number
   })
+}
+
+# WebSocket mode (async / stream)
+
+variable "execution_mode" {
+  type        = string
+  description = "Execution mode (rest_sync, rest_async, async, stream)"
+  default     = "rest_sync"
+}
+
+variable "websocket_mode" {
+  type        = bool
+  description = "Whether a WebSocket execution mode (async/stream) is enabled"
+  default     = false
+}
+
+variable "websocket_connections_table_name" {
+  type        = string
+  description = "DynamoDB WebSocket connections table name (for WebSocket mode)"
+  default     = null
+}
+
+variable "websocket_connections_table_arn" {
+  type        = string
+  description = "DynamoDB WebSocket connections table ARN (for WebSocket mode)"
+  default     = null
+}
+
+variable "websocket_api_execution_arn" {
+  type        = string
+  description = "WebSocket API execution ARN (for ManageConnections permission)"
+  default     = null
+}
+
+variable "websocket_endpoint_url" {
+  type        = string
+  description = "WebSocket API management endpoint URL for PostToConnection (https://{api-id}.execute-api.{region}.amazonaws.com/{stage})"
+  default     = null
 }
 
 variable "tags" {
