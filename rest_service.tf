@@ -28,7 +28,7 @@ module "rest_service" {
   dynamodb_thread_table_arn      = local.dynamodb_thread_table_arn
   dynamodb_thread_table_name     = local.dynamodb_thread_table_name
   enable_scheduling              = var.enable_scheduling
-  ssm_enabled                    = var.ssm_enabled && !var.queue_mode # in queue mode the agent runner owns secret reads
+  ssm_enabled                    = var.ssm_enabled # queue mode too: this service verifies integration webhooks and delivers their replies
   account_id                     = data.aws_caller_identity.current.account_id
   schedule_group_name            = local.schedule_group_name
   scheduler_execution_role_arn   = local.scheduler_execution_role_arn
@@ -55,8 +55,9 @@ module "rest_service" {
   response_store_table_name = (var.queue_mode && !local.is_websocket_mode) ? aws_dynamodb_table.response_store[0].name : null
   queue_config              = var.queue_config
 
-  # WebSocket mode (async / stream): REST service handles connections and push.
+  # WebSocket mode (async): REST service handles connections and push.
   execution_mode                   = var.execution_mode
+  message_type                     = var.message_type
   websocket_mode                   = local.is_websocket_mode
   websocket_connections_table_name = local.is_websocket_mode ? module.websocket_connections[0].table_name : null
   websocket_connections_table_arn  = local.is_websocket_mode ? module.websocket_connections[0].table_arn : null
